@@ -40,6 +40,14 @@ reads that marker.
   form every release up to 0.11.2 wrote. `examples/inspect.rs` mirrors the
   command, so it moves with it.
 
+- `termlens render --out=` with nothing after the `=` says `--out needs a
+  PATH argument`, the diagnostic the spelled-out `--out` already gave,
+  instead of passing the empty path to the filesystem and reporting
+  `termlens: : No such file or directory` — a message naming neither the
+  flag nor the file (#451). An unset variable is how the empty value
+  usually arrives, and `--out=` was the only `=`-spelled flag that did not
+  name itself when handed one.
+
 ## [0.11.2] - 2026-09-17
 
 ### Added

@@ -433,7 +433,13 @@ fn render(args: &[String]) -> ExitCode {
                 Some(path) => out_path = Some(path.as_str()),
                 None => return fail("--out needs a PATH argument"),
             },
-            other if other.starts_with("--out=") => out_path = Some(&other["--out=".len()..]),
+            other if other.starts_with("--out=") => {
+                let path = &other["--out=".len()..];
+                if path.is_empty() {
+                    return fail("--out needs a PATH argument");
+                }
+                out_path = Some(path);
+            }
             other if other.starts_with('-') && other != STDIN => {
                 return fail(&format!(
                     "unknown option {other:?} (try `termlens render --help`)"

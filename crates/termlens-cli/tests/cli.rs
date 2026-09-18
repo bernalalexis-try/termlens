@@ -791,6 +791,23 @@ fn diff_refuses_two_stdin_operands() -> termlens::Result<()> {
     Ok(())
 }
 
+/// An empty value is what a shell hands over when a variable is unset, so
+/// `--out=$DEST` with `DEST` never assigned is the way this arrives. Every
+/// other `=`-spelled flag names itself when handed one; `--out=` reported
+/// the filesystem's complaint about `""` instead (#451).
+#[test]
+fn render_empty_out_value_names_the_flag() -> termlens::Result<()> {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_termlens");
+    let out = Command::new(bin)
+        .args(["render", "--text", "--out=", &data("before.snap")])
+        .output()?;
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(stderr, "termlens: --out needs a PATH argument\n");
+    Ok(())
+}
+
 /// `render --out` exists because every caller was writing `> file.svg`, and
 /// a redirect truncates the file before termlens runs — so a failing render
 /// leaves an empty file where a bug report expected an image (#313).
