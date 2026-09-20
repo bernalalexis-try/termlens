@@ -576,6 +576,13 @@ fn help_and_version() -> termlens::Result<()> {
         "{}",
         t.screen()
     );
+    let mut t = termlens::bin!("termlens", args(["inspect", "--help"]))?;
+    assert_eq!(t.wait_exit()?.code(), Some(0));
+    let help = t.screen().to_string();
+    assert!(
+        help.contains("inspect --ansi") && help.contains("saved screen"),
+        "`inspect --help` must say --ansi still writes a saved screen:\n{help}"
+    );
     let mut t = termlens::bin!("termlens", args(["--version"]))?;
     assert_eq!(t.wait_exit()?.code(), Some(0));
     assert!(
@@ -684,6 +691,97 @@ fn inspect_stdout_is_a_saved_screen_and_the_trailer_is_on_stderr() -> termlens::
     for p in [path, old, dashes] {
         let _ = std::fs::remove_file(p);
     }
+    Ok(())
+}
+
+/// `inspect --ansi > file` is still a saved screen (#478). `--ansi` paints
+/// on a terminal; a pipe writes `with_styles` so `render` and `diff` read
+/// the file back, including the colour the flag was asked to keep.
+#[test]
+#[cfg_attr(windows, ignore = "the program under inspection is a POSIX shell")]
+fn inspect_ansi_redirect_is_a_saved_screen() -> termlens::Result<()> {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_termlens");
+    let out = Command::new(bin)
+        .args([
+            "inspect",
+            "--size",
+            "30x3",
+            "--ansi",
+            "sh",
+            "-c",
+            r#"printf '\033[1;31mred\033[0m'"#,
+        ])
+        .output()?;
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).expect("utf-8");
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "a redirect must not write C0: {stdout:?}"
+    );
+    let parsed = Screen::parse(&stdout).expect("stdout is a saved screen");
+    assert_eq!(parsed.size(), (30, 3));
+    assert_eq!(parsed.find("red"), Some((0, 0)));
+    let cell = parsed.cell(0, 0).expect("the painted cell");
+    assert_eq!(
+        cell.style().fg,
+        Color::Indexed(1),
+        "{}",
+        parsed.with_styles()
+    );
+    assert!(cell.style().bold, "{}", parsed.with_styles());
+    assert!(
+        stdout.contains("styles:"),
+        "colour survives as the styles block: {stdout:?}"
+    );
+
+    let path = std::env::temp_dir().join(format!(
+        "termlens-cli-inspect-ansi-{}.txt",
+        std::process::id()
+    ));
+    std::fs::write(&path, &stdout)?;
+    let file = path.to_str().unwrap();
+    let render = Command::new(bin)
+        .args(["render", "--text", file])
+        .output()?;
+    assert_eq!(render.status.code(), Some(0), "{render:?}");
+    let diff = Command::new(bin).args(["diff", file, file]).output()?;
+    assert_eq!(diff.status.code(), Some(0), "{diff:?}");
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+/// `--ansi` on a terminal still paints, so a person who asked for colour
+/// sees it rather than a `styles:` block. Through a PTY, stdout *is* a
+/// terminal, and the outer emulator consumes the SGR — the cell is red.
+#[test]
+#[cfg_attr(windows, ignore = "the program under inspection is a POSIX shell")]
+fn inspect_ansi_paints_on_a_terminal() -> termlens::Result<()> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut t = termlens::bin!(
+        "termlens",
+        env("PATH", &path),
+        args([
+            "inspect",
+            "--size",
+            "30x3",
+            "--ansi",
+            "sh",
+            "-c",
+            r#"printf '\033[1;31mred\033[0m'"#
+        ])
+    )?;
+    assert_eq!(t.wait_exit()?.code(), Some(0), "{}", t.screen());
+    let s = t.screen();
+    assert!(s.contains("red"), "{s}");
+    assert!(
+        !s.contains("styles:"),
+        "a terminal is painted, not described: {s}"
+    );
+    let (row, col) = s.find("red").expect("the painted word");
+    let cell = s.cell(row, col).expect("the painted cell");
+    assert_eq!(cell.style().fg, Color::Indexed(1), "{}", s.with_styles());
+    assert!(cell.style().bold, "{}", s.with_styles());
     Ok(())
 }
 

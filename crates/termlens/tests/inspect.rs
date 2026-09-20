@@ -63,6 +63,36 @@ fn inspect_runs_and_reports_cli_failures() {
     );
     termlens::Screen::parse(&stdout).expect("stdout is a saved screen");
 
+    // `--ansi` on a pipe is still a saved screen (#478): the example
+    // follows the command, so a redirect must parse, with the colour
+    // kept as a `styles:` block rather than as C0.
+    let ansi = run_inspect(
+        bin,
+        &[
+            "--size",
+            "30x3",
+            "--ansi",
+            "sh",
+            "-c",
+            r#"printf '\033[1;31mred\033[0m'"#,
+        ],
+    );
+    assert!(
+        ansi.status.success(),
+        "inspect --ansi failed: {}",
+        String::from_utf8_lossy(&ansi.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&ansi.stdout);
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "a redirect must not write C0:\n{stdout}"
+    );
+    let parsed = termlens::Screen::parse(&stdout).expect("stdout is a saved screen");
+    assert_eq!(parsed.find("red"), Some((0, 0)));
+    let cell = parsed.cell(0, 0).expect("the painted cell");
+    assert_eq!(cell.style().fg, termlens::Color::Indexed(1));
+    assert!(cell.style().bold);
+
     let bad_size = run_inspect(bin, &["--size", "12", "sh"]);
     assert_eq!(bad_size.status.code(), Some(2));
     assert!(

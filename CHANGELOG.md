@@ -27,6 +27,11 @@ reads that marker.
   `-` operand already is, instead of creating a file named `-` (#469).
   Both spellings (`--out -` and `--out=-`) do; a file named `-` is still
   `./-`. A failing render still creates nothing (#313).
+- `termlens inspect --ansi > file` writes a saved screen — the text format
+  with its `styles:` block — instead of raw ANSI escapes that `diff` and
+  `render` refused as a control character (#478). On a terminal `--ansi`
+  still paints. `examples/inspect.rs` mirrors the command, so it moves
+  with it.
 
 - `termlens diff --color` with no WHEN after it says `--color needs a WHEN
   argument`, the diagnostic every other flag's missing value gets, instead of
