@@ -890,6 +890,72 @@ fn render_out_writes_the_file_and_creates_none_when_the_render_fails() -> termle
     Ok(())
 }
 
+/// `--out -` is stdout, the same stream every other `-` operand already
+/// is (#469). `--out` used to take it as a filename, so `render --out -`
+/// wrote `./-` and printed nothing — exit 0, and a file most shells make
+/// awkward to delete. `./-` is still a file named `-`.
+#[test]
+fn render_out_dash_writes_to_stdout_and_creates_no_file() -> termlens::Result<()> {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_termlens");
+    let dir = std::env::temp_dir().join(format!("termlens-render-out-dash-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let snap = data("before.snap");
+    let dash = dir.join("-");
+
+    let to_stdout = Command::new(bin)
+        .args(["render", "--text", &snap])
+        .output()?;
+    assert_eq!(to_stdout.status.code(), Some(0), "{to_stdout:?}");
+
+    // Both spellings arrive at the same string; the cwd is the temp dir so
+    // a regression that writes `./-` is visible here, not in the suite root.
+    let spaced = Command::new(bin)
+        .current_dir(&dir)
+        .args(["render", "--text", "--out", "-", &snap])
+        .output()?;
+    assert_eq!(spaced.status.code(), Some(0), "{spaced:?}");
+    assert_eq!(
+        spaced.stdout, to_stdout.stdout,
+        "the same bytes stdout would have carried"
+    );
+    assert!(
+        !dash.exists(),
+        "--out - created a file named -: {}",
+        dash.display()
+    );
+
+    let equals = Command::new(bin)
+        .current_dir(&dir)
+        .args(["render", "--text", "--out=-", &snap])
+        .output()?;
+    assert_eq!(equals.status.code(), Some(0), "{equals:?}");
+    assert_eq!(
+        equals.stdout, to_stdout.stdout,
+        "--out=- is the same stream"
+    );
+    assert!(
+        !dash.exists(),
+        "--out=- created a file named -: {}",
+        dash.display()
+    );
+
+    let out = Command::new(bin)
+        .current_dir(&dir)
+        .args(["render", "--text", "--out", "./-", &snap])
+        .output()?;
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(out.stdout.is_empty(), "--out ./- means not stdout: {out:?}");
+    assert_eq!(
+        std::fs::read(&dash)?,
+        to_stdout.stdout,
+        "./- is a file named -"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// The operand is the whole input: two of them are ambiguous, and the last
 /// silently winning is how a stale path renders a screen nobody named —
 /// with `--out` there is nothing on screen to reveal it (#364).

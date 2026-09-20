@@ -23,6 +23,10 @@ reads that marker.
   word every subcommand uses for a `-`-prefixed token, instead of an unknown
   command (#475). The exit is still 2 and the hint is still `--help`.
   `termlens nonesuch` is unchanged.
+- `termlens render --out -` writes to stdout, the same stream every other
+  `-` operand already is, instead of creating a file named `-` (#469).
+  Both spellings (`--out -` and `--out=-`) do; a file named `-` is still
+  `./-`. A failing render still creates nothing (#313).
 
 - `termlens diff --color` with no WHEN after it says `--color needs a WHEN
   argument`, the diagnostic every other flag's missing value gets, instead of

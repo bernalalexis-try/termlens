@@ -86,8 +86,9 @@ colour for a terminal, the plain text format with its styles: block, or the
 format-1 JSON document the crate's `serde` feature writes.
 
 <a> may be `-`, meaning standard input. --out writes to PATH instead of
-stdout, and creates nothing when the render fails — unlike a shell
-redirect, which truncates the file before termlens runs.";
+stdout; `--out -` is standard output, and a file named `-` is still `./-`.
+--out creates nothing when the render fails — unlike a shell redirect,
+which truncates the file before termlens runs.";
 
 /// Where a rendering goes, so a reader that closed early (`termlens … |
 /// head`) is a clean exit rather than a panic on a broken pipe.
@@ -169,7 +170,10 @@ fn load(path: &str) -> Result<Screen, String> {
     Screen::parse(strip_inspect_trailer(body)).map_err(|e| format!("{}: {e}", name_of(path)))
 }
 
-/// The operand that means standard input.
+/// The dash operand: standard input where a screen is read, standard
+/// output where one is written (`render --out -`, #469). One constant,
+/// because it is one convention — a reader who meets `-` in either
+/// position should not have to ask which stream is meant.
 const STDIN: &str = "-";
 /// What a diagnostic calls it, since `-: ...` reads as a stray flag.
 const STDIN_NAME: &str = "<stdin>";
@@ -478,12 +482,14 @@ fn render(args: &[String]) -> ExitCode {
     // (#313): `termlens render … > out.svg` truncates out.svg in the shell
     // before the process runs, so a failing render leaves an empty file
     // behind. --out cannot, because nothing is opened until there are bytes.
+    // `--out -` is stdout, the same stream every other `-` operand already
+    // is (#469). Treating it as a filename wrote `./-` and printed nothing.
     match out_path {
+        Some(STDIN) | None => print(&out),
         Some(path) => match std::fs::write(path, &out) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => fail(&format!("{path}: {e}")),
         },
-        None => print(&out),
     }
 }
 
