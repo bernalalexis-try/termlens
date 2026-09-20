@@ -374,6 +374,33 @@ fn a_file_that_is_not_a_screen_exits_two_and_names_it() -> termlens::Result<()> 
     Ok(())
 }
 
+/// A flag typed in place of a subcommand is an unknown option, not an
+/// unknown command (#475). `-v` and `--verbose` are the two most likely
+/// wrong guesses at this CLI, and both are flags. `nonesuch` stays a
+/// command — `check-cli-contract.sh` pins the exit, this pins the word.
+#[test]
+fn a_top_level_flag_is_an_unknown_option_not_a_command() {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_termlens");
+    for flag in ["--verbose", "-v"] {
+        let out = Command::new(bin).arg(flag).output().expect("spawn");
+        assert_eq!(out.status.code(), Some(2), "{flag}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            stderr,
+            format!("termlens: unknown option {flag:?} (try --help)\n"),
+            "{flag}"
+        );
+    }
+
+    let out = Command::new(bin).arg("nonesuch").output().expect("spawn");
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stderr),
+        "termlens: unknown command \"nonesuch\" (try --help)\n"
+    );
+}
+
 #[test]
 fn the_text_a_wait_error_prints_is_a_saved_screen_too() -> termlens::Result<()> {
     // No header, no styles block: the block from a CI log.

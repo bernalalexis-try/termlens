@@ -19,6 +19,11 @@ reads that marker.
 
 ### Fixed
 
+- `termlens --verbose` and `termlens -v` report an unknown option, the same
+  word every subcommand uses for a `-`-prefixed token, instead of an unknown
+  command (#475). The exit is still 2 and the hint is still `--help`.
+  `termlens nonesuch` is unchanged.
+
 - `termlens diff --color` with no WHEN after it says `--color needs a WHEN
   argument`, the diagnostic every other flag's missing value gets, instead of
   printing the raw `Some("…")`/`None` and quietly eating the operand that
