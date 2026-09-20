@@ -57,9 +57,14 @@ when it ends is killed. The child environment is cleared by default
 except for PATH; --inherit-env keeps the caller's environment, and
 repeatable --env sets selected values.
 --cwd runs the program in PATH, which must be an existing directory.
---ansi paints the screen in colour on a terminal. A redirect or a pipe
-still writes a saved screen — the text format with its styles: block —
-so `inspect --ansi … > file` is what `diff` and `render` read back.
+--ansi paints the screen in colour on a terminal.
+
+What goes to stdout depends on where stdout goes. A terminal gets what
+you came to look at: the plain text, or the painted screen with --ansi.
+Anything else -- a redirect, a pipe -- gets a saved screen with its
+styles: block, because that is the rendering that carries colour and the
+one `termlens diff` and `termlens render` read back. So a redirect never
+loses a style, and never writes an escape those two would refuse.
 
 The screen goes to stdout and nothing else does, so `inspect … > file`
 saves a screen that `termlens diff` and `termlens render` read back. The
@@ -511,18 +516,28 @@ fn take<T>(
     parse(&raw).ok_or_else(|| format!("bad {flag} {raw:?}, expected e.g. {example}"))
 }
 
-/// The text rendering, or with `--ansi` the header over the screen in
-/// colour when stdout is a terminal. A redirect or a pipe is still a
-/// saved screen (#478): `to_ansi` writes C0 controls the snapshot format
-/// refuses, so the non-terminal path writes `with_styles` instead —
-/// colour kept, parseable.
+/// What `inspect` writes to stdout, which is two different jobs.
+///
+/// A terminal is a person looking: the plain text they already read, or
+/// with `--ansi` the header over the screen painted in colour. Anything
+/// else — a redirect, a pipe — is a saved screen somebody means to read
+/// back, so it gets `with_styles`: the text format *with* its `styles:`
+/// block, which is the only one of the two that carries colour.
+///
+/// That split is what #454 and #478 each asked for from one side.
+/// Without the block a redirect lost every style, so `diff` called bold
+/// red and bold green the same picture (#454). With `to_ansi` a redirect
+/// wrote C0 controls the snapshot format refuses, so `render` and `diff`
+/// would not read back what `inspect --ansi > file` had just written
+/// (#478). Both are the same mistake — writing the *viewing* rendering
+/// to a file — and `is_terminal` is what tells the two jobs apart.
 fn inspect_render(screen: &Screen, ansi: bool) -> String {
-    if ansi && io::stdout().is_terminal() {
+    if !io::stdout().is_terminal() {
+        screen.with_styles().to_string()
+    } else if ansi {
         let header = screen.to_string();
         let header = header.lines().next().unwrap_or_default();
         format!("{header}\n{}", screen.to_ansi())
-    } else if ansi {
-        screen.with_styles().to_string()
     } else {
         screen.to_string()
     }

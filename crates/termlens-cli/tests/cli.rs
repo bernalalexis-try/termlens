@@ -579,9 +579,14 @@ fn help_and_version() -> termlens::Result<()> {
     let mut t = termlens::bin!("termlens", args(["inspect", "--help"]))?;
     assert_eq!(t.wait_exit()?.code(), Some(0));
     let help = t.screen().to_string();
+    // The help has to say which rendering a redirect gets, or the split
+    // #454 and #478 introduced is undiscoverable: both flags behave one
+    // way at a prompt and another through a pipe. Needles chosen to sit
+    // within one line of the 80-column help, so this pins the claim
+    // rather than the line breaks.
     assert!(
-        help.contains("inspect --ansi") && help.contains("saved screen"),
-        "`inspect --help` must say --ansi still writes a saved screen:\n{help}"
+        help.contains("--ansi") && help.contains("gets a saved screen"),
+        "`inspect --help` must say a redirect gets a saved screen:\n{help}"
     );
     let mut t = termlens::bin!("termlens", args(["--version"]))?;
     assert_eq!(t.wait_exit()?.code(), Some(0));
@@ -639,6 +644,10 @@ fn inspect_stdout_is_a_saved_screen_and_the_trailer_is_on_stderr() -> termlens::
     let stderr = String::from_utf8(out.stderr).expect("utf-8");
     assert!(stdout.starts_with("size: 20x3  cursor: "), "{stdout:?}");
     assert!(stdout.contains("hi there"), "{stdout:?}");
+    assert!(
+        stdout.contains("styles:"),
+        "a redirect keeps the styles block: {stdout:?}"
+    );
     assert!(!stdout.contains("---"), "no trailer on stdout: {stdout:?}");
     assert_eq!(
         stderr.trim_end(),
@@ -782,6 +791,153 @@ fn inspect_ansi_paints_on_a_terminal() -> termlens::Result<()> {
     let cell = s.cell(row, col).expect("the painted cell");
     assert_eq!(cell.style().fg, Color::Indexed(1), "{}", s.with_styles());
     assert!(cell.style().bold, "{}", s.with_styles());
+    Ok(())
+}
+
+/// The other half of #454's split: a terminal is a person looking, so it
+/// gets the plain text it always got. Without this, "a redirect keeps its
+/// styles" collapses into "everything carries a styles block", which is
+/// the noise #454 weighed and did not want at a prompt — and nothing else
+/// here would notice the difference, because every other test in this file
+/// reads `inspect` through a pipe.
+#[test]
+#[cfg_attr(windows, ignore = "the program under inspection is a POSIX shell")]
+fn inspect_on_a_terminal_stays_plain() -> termlens::Result<()> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let mut t = termlens::bin!(
+        "termlens",
+        env("PATH", &path),
+        args([
+            "inspect",
+            "--size",
+            "30x3",
+            "sh",
+            "-c",
+            r#"printf '\033[1;31mred\033[0m'"#
+        ])
+    )?;
+    assert_eq!(t.wait_exit()?.code(), Some(0), "{}", t.screen());
+    let s = t.screen();
+    assert!(s.contains("red"), "{s}");
+    assert!(
+        !s.contains("styles:"),
+        "a terminal gets what it always got, not a saved screen: {s}"
+    );
+    Ok(())
+}
+
+/// `inspect … > file` used to write the plain rendering, so two screens
+/// that differed only in colour compared as the same picture (#454).
+/// The redirect is a `with_styles` snapshot now: `diff` names the run,
+/// and the file still round-trips through `render` — including one a
+/// 0.10 inspect saved, trailer on stdout.
+#[test]
+#[cfg_attr(windows, ignore = "the program under inspection is a POSIX shell")]
+fn inspect_redirect_keeps_styles_so_diff_sees_a_colour_change() -> termlens::Result<()> {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_termlens");
+    let inspect = |sgr: &str| {
+        Command::new(bin)
+            .args([
+                "inspect",
+                "--size",
+                "20x2",
+                "sh",
+                "-c",
+                &format!(r#"printf '\033[{sgr}mred\033[0m'"#),
+            ])
+            .output()
+            .expect("inspect ran")
+    };
+    let red = inspect("1;31");
+    let green = inspect("1;32");
+    assert!(red.status.success(), "{red:?}");
+    assert!(green.status.success(), "{green:?}");
+    let red_out = String::from_utf8(red.stdout).expect("utf-8");
+    let green_out = String::from_utf8(green.stdout).expect("utf-8");
+    assert!(
+        red_out.contains("styles:") && green_out.contains("styles:"),
+        "a redirect keeps the styles block:\n{red_out}\n{green_out}"
+    );
+
+    let red_screen = Screen::parse(&red_out).expect("red is a saved screen");
+    let green_screen = Screen::parse(&green_out).expect("green is a saved screen");
+    let red_cell = red_screen.cell(0, 0).expect("the painted cell");
+    let green_cell = green_screen.cell(0, 0).expect("the painted cell");
+    assert_eq!(
+        red_cell.style().fg,
+        Color::Indexed(1),
+        "{}",
+        red_screen.with_styles()
+    );
+    assert_eq!(
+        green_cell.style().fg,
+        Color::Indexed(2),
+        "{}",
+        green_screen.with_styles()
+    );
+    assert!(red_cell.style().bold && green_cell.style().bold);
+
+    let dir = std::env::temp_dir().join(format!(
+        "termlens-cli-inspect-styles-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir)?;
+    let red_path = dir.join("red.snap");
+    let green_path = dir.join("green.snap");
+    std::fs::write(&red_path, &red_out)?;
+    std::fs::write(&green_path, &green_out)?;
+    let red_file = red_path.to_str().unwrap();
+    let green_file = green_path.to_str().unwrap();
+
+    let diff = Command::new(bin)
+        .args(["diff", "--color", "never", red_file, green_file])
+        .output()?;
+    assert_eq!(diff.status.code(), Some(1), "{diff:?}");
+    let diff_out = String::from_utf8_lossy(&diff.stdout);
+    assert!(
+        diff_out.contains("styles:") && diff_out.contains("fg=1") && diff_out.contains("fg=2"),
+        "diff names the colour change: {diff_out}"
+    );
+
+    let text = Command::new(bin)
+        .args(["render", "--text", red_file])
+        .output()?;
+    assert_eq!(text.status.code(), Some(0), "{text:?}");
+    assert!(
+        String::from_utf8_lossy(&text.stdout).contains("styles:"),
+        "{text:?}"
+    );
+    let json = Command::new(bin)
+        .args(["render", "--json", red_file])
+        .output()?;
+    assert_eq!(json.status.code(), Some(0), "{json:?}");
+    let document = String::from_utf8(json.stdout).expect("utf-8 JSON");
+    let from_json: Screen = serde_json::from_str(&document).expect("a termlens Screen");
+    assert_eq!(
+        from_json.cell(0, 0).expect("the painted cell").style().fg,
+        Color::Indexed(1),
+        "{}",
+        from_json.with_styles()
+    );
+
+    // A file a 0.10 inspect saved — trailer on stdout — still reads.
+    let old = dir.join("old.snap");
+    std::fs::write(&old, format!("{red_out}--- exited: exit code 0 ---\n"))?;
+    let render = Command::new(bin)
+        .args(["render", "--text", old.to_str().unwrap()])
+        .output()?;
+    assert_eq!(render.status.code(), Some(0), "{render:?}");
+    let against_old = Command::new(bin)
+        .args(["diff", red_file, old.to_str().unwrap()])
+        .output()?;
+    assert_eq!(
+        against_old.status.code(),
+        Some(0),
+        "the trailer is not a row: {against_old:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }
 
